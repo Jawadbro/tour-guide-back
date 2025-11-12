@@ -13,7 +13,7 @@ model = genai.GenerativeModel("gemini-2.0-flash")
 
 def load_places_data() -> List[Dict]:
     """Load the places.json file"""
-    places_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'places.json')
+    places_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'places.json')
     with open(places_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
