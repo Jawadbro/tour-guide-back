@@ -213,18 +213,66 @@ def get_tour_suggestions(query: str, top_k: int = 20) -> Dict[str, Any]:
         places = load_places_data()
         location_info = extract_location_info(query)
         ranked_places = filter_and_rank_places(places, location_info)
-        if not ranked_places:
-            return {"success": False, "error": "No matching tourist places found."}
-        final_spots = ranked_places[:top_k]
-        friendly_text = generate_friendly_response(query, final_spots, location_info)
-        return {
-            "success": True,
-            "query": query,
-            "location": location_info["location"],
-            "type": location_info["type"],
-            "count": len(final_spots),
-            "suggestions": final_spots,
-            "ai_message": friendly_text
-        }
+
+        # Normal RAG flow
+        if ranked_places:
+            final_spots = ranked_places[:top_k]
+            friendly_text = generate_friendly_response(query, final_spots, location_info)
+            return {
+                "success": True,
+                "query": query,
+                "location": location_info["location"],
+                "type": location_info["type"],
+                "count": len(final_spots),
+                "suggestions": final_spots,
+                "ai_message": friendly_text
+            }
+
+        # AI Fallback
+        else:
+            # Step 1: Find nearby / related places from dataset
+            fallback_places = []
+            query_lower = query.lower()
+            for place in places:
+                if (query_lower in (place.get("name") or "").lower() or
+                    query_lower in (place.get("division") or "").lower()):
+                    fallback_places.append(place)
+            if not fallback_places:
+                # If none found, select popular destinations
+                fallback_places = [
+                    p for p in places
+                    if any(k in (p.get("name") or "").lower() for k in [
+                        "cox", "sundarban", "kuakata", "bandarban",
+                        "rangamati", "sajek", "sylhet", "saint martin"
+                    ])
+                ][:top_k]
+
+            # Step 2: Generate AI response with travel tips and mini-itinerary
+            fallback_prompt = f"""
+You are "Rahim", a cheerful Bangladeshi tour guide 🇧🇩.
+A user asked: "{query}"
+
+I don't have direct information about this place. 
+Please provide a warm, friendly response that includes:
+- What a visitor might experience there (nature, culture, attractions)
+- Suggested nearby places (if any from dataset)
+- A mini travel itinerary if possible (1-2 day plan)
+- Cultural and food recommendations
+
+Then mention some famous Bangladeshi destinations as alternatives.
+"""
+
+            ai_fallback_response = model.generate_content(fallback_prompt)
+
+            return {
+                "success": True,
+                "query": query,
+                "location": location_info["location"],
+                "type": "ai_fallback",
+                "count": len(fallback_places),
+                "suggestions": fallback_places[:top_k],
+                "ai_message": ai_fallback_response.text if ai_fallback_response else "Sorry, I couldn’t generate a response."
+            }
+
     except Exception as e:
         return {"success": False, "error": str(e)}

@@ -1,13 +1,10 @@
 # app/main.py
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from typing import Dict, Any
 from app.models import TourQuery, TourResponse
-from app.rag import (
-    load_places_data,
-    extract_location_info,
-    filter_and_rank_places,
-    generate_friendly_response
-)
+from app.rag import get_tour_suggestions, extract_location_info, filter_and_rank_places, generate_friendly_response, load_places_data
 from app.config import settings
 
 app = FastAPI(
@@ -25,8 +22,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/")
-async def root():
+async def root() -> Dict[str, Any]:
     return {
         "message": "Welcome to BD Tour Guide API! 🇧🇩",
         "status": "active",
@@ -34,7 +32,7 @@ async def root():
         "endpoints": {
             "query": "POST /api/query",
             "suggest": "POST /api/suggest",
-            "suggest_simple": "POST /api/suggest-simple?query=...",
+            "suggest_simple": "GET /api/suggest-simple?query=...",
             "health": "GET /health",
             "stats": "GET /api/stats"
         },
@@ -46,56 +44,53 @@ async def root():
         ]
     }
 
+
 @app.get("/health")
-async def health_check():
+async def health_check() -> Dict[str, Any]:
     return {
         "status": "healthy",
         "service": "BD Tour Guide",
         "version": settings.API_VERSION
     }
 
-# 🧠 Unified endpoint for the frontend React chat
+
+# Unified endpoint for frontend chat (AI + RAG)
 @app.post("/api/query")
-async def query_places(payload: dict):
+async def query_places(payload: Dict[str, Any]) -> JSONResponse:
     """
-    Unified query endpoint for frontend chat interface.
-    Returns both Rahim's friendly response and a list of suggested spots.
+    Returns both RAG suggestions and AI fallback response.
+    Frontend should display ai_message and suggestions.
     """
     try:
         query = payload.get("query", "").strip()
         if not query:
             raise HTTPException(status_code=400, detail="Query is required.")
 
-        # Load places data
+        # Load data and extract info
         places = load_places_data()
-
-        # Extract intent + location info
         location_info = extract_location_info(query)
-
-        # Filter & rank places
         ranked_places = filter_and_rank_places(places, location_info)
 
-        # Generate natural response
+        # AI-friendly response
         response_text = generate_friendly_response(query, ranked_places[:10], location_info)
 
-        return {
+        return JSONResponse({
             "success": True,
-            "response": response_text,
-            "spots": ranked_places[:10]
-        }
+            "query": query,
+            "type": location_info.get("type", "unknown"),
+            "ai_message": response_text,
+            "suggestions": ranked_places[:10]  # top 10 spots
+        })
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Legacy endpoint for structured RAG suggestions
 @app.post("/api/suggest", response_model=TourResponse)
-async def suggest_places(query_data: TourQuery):
-    """Legacy endpoint for RAG suggestions."""
+async def suggest_places(query_data: TourQuery) -> Dict[str, Any]:
     try:
-        from app.rag import get_tour_suggestions
-        result = get_tour_suggestions(
-            query=query_data.query,
-            top_k=query_data.top_k or 20
-        )
+        result = get_tour_suggestions(query=query_data.query, top_k=query_data.top_k or 20)
         if not result["success"]:
             raise HTTPException(status_code=404, detail=result.get("error", "No results found"))
         return result
@@ -104,29 +99,33 @@ async def suggest_places(query_data: TourQuery):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
+
+# Simple GET endpoint for quick suggestions
 @app.get("/api/suggest-simple")
-async def suggest_places_simple(query: str):
-    """Simple endpoint for basic suggestions."""
+async def suggest_places_simple(query: str) -> Dict[str, Any]:
     try:
-        from app.rag import get_tour_suggestions
         result = get_tour_suggestions(query=query, top_k=20)
+        # Mark fallback type if no RAG suggestions
+        if result.get("success") and len(result.get("suggestions", [])) == 0:
+            result["type"] = "ai_fallback"
+        else:
+            result["type"] = "rag_result"
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Endpoint to get dataset statistics
 @app.get("/api/stats")
-async def get_stats():
-    """Dataset statistics endpoint."""
+async def get_stats() -> Dict[str, Any]:
     try:
         places = load_places_data()
-
         division_counts = {}
         category_counts = {}
 
         for place in places:
             division = place.get("division", "Unknown")
             division_counts[division] = division_counts.get(division, 0) + 1
-
             categories = place.get("categories", ["General"])
             for c in categories:
                 category_counts[c] = category_counts.get(c, 0) + 1
