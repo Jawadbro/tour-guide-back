@@ -23,7 +23,7 @@ app.add_middleware(
 )
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root() -> Dict[str, Any]:
     return {
         "message": "Welcome to BD Tour Guide API! 🇧🇩",
@@ -45,7 +45,7 @@ async def root() -> Dict[str, Any]:
     }
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check() -> Dict[str, Any]:
     return {
         "status": "healthy",
